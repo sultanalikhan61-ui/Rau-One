@@ -219,9 +219,26 @@
 
             const distToPlayer = Math.hypot(slime.x - player.x, slime.y - player.y);
             if (distToPlayer < slime.radius + player.radius) {
-                if (score > 0) score--;
-                player.x += (player.x - slime.x) * 0.4;
-                player.y += (player.y - slime.y) * 0.4;
+                // Если у нее есть собранные предметы — возвращаем один предмет обратно на поле!
+                if (score > 0) {
+                    score--;
+                    // Ищем один из уже собранных предметов и "спавним" его заново
+                    const collectedItem = items.find(it => it.collected);
+                    if (collectedItem) {
+                        collectedItem.collected = false;
+                        collectedItem.x = 40 + Math.random() * (canvas.width - 80);
+                        collectedItem.y = 40 + Math.random() * (canvas.width - 80);
+                    }
+                }
+                
+                // Импульс отталкивания, чтобы они не липли друг к другу
+                const angle = Math.atan2(player.y - slime.y, player.x - slime.x);
+                player.x += Math.cos(angle) * 40;
+                player.y += Math.sin(angle) * 40;
+
+                // Ограничиваем координаты в пределах экрана
+                player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
+                player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, player.y));
             }
 
             client.publish(`slime_game_${roomCode}`, JSON.stringify({

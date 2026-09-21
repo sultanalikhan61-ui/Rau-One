@@ -14,6 +14,9 @@
         button:disabled { background: #555; }
         input { text-align: center; width: 200px; }
         
+        #peer-status { color: #ffbe76; font-size: 15px; max-width: 80%; word-break: break-word; }
+        #error-log { color: #ff4757; font-size: 13px; max-width: 80%; min-height: 20px; }
+
         #game-container { position: relative; width: 100vw; display: flex; flex-direction: column; align-items: center; }
         canvas { background: #2f3542; border: 3px solid #ff4757; border-radius: 12px; max-width: 95vw; max-height: 55vh; touch-action: none; }
         #ui { margin-bottom: 8px; font-size: 18px; font-weight: bold; background: rgba(0,0,0,0.6); padding: 8px 16px; border-radius: 20px; z-index: 5; }
@@ -27,7 +30,8 @@
 
     <div id="lobby">
         <h2>Slime Quest 💖</h2>
-        <p id="peer-status">Подключение к международному серверу...</p>
+        <p id="peer-status">Подключение к серверу...</p>
+        <p id="error-log"></p>
         <div style="display:flex; gap:10px;">
             <button id="btn-host" onclick="createRoom()" disabled>Создать (Я Слайм)</button>
         </div>
@@ -52,11 +56,14 @@
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     const scoreEl = document.getElementById('score');
+    const statusEl = document.getElementById('peer-status');
+    const errorEl = document.getElementById('error-log');
 
     let peer = null;
     let conn = null;
     let isHost = false;
     let myId = '';
+    let connectTimeout = null;
 
     const boyImg = new Image();
     boyImg.src = 'boy.jpg';
@@ -64,8 +71,8 @@
     const girlImg = new Image();
     girlImg.src = 'girl.jpg';
 
-    let player = { x: 100, y: 100, radius: 22, speed: 4 }; // Искатель (Она)
-    let slime = { x: 500, y: 500, radius: 24, speed: 3.5 };  // Слайм (Ты)
+    let player = { x: 100, y: 100, radius: 22, speed: 4 };
+    let slime = { x: 500, y: 500, radius: 24, speed: 3.5 };
     let items = [];
     let score = 0;
     let keys = {};
@@ -73,26 +80,38 @@
 
     const ITEM_TYPES = ['❤️', '☕', '🍫', '🍪', '🎁', '✨', '🧸'];
 
+    function logError(msg) {
+        console.error(msg);
+        errorEl.innerText = msg;
+    }
+
     function initPeer() {
         const roomCode = Math.floor(1000 + Math.random() * 9000).toString();
         
-        // Добавляем международные STUN-серверы Google для обхода блокировок между KZ и UK
         peer = new Peer(roomCode, {
             config: {
                 iceServers: [
                     { urls: 'stun:stun.l.google.com:19302' },
                     { urls: 'stun:stun1.l.google.com:19302' },
-                    { urls: 'stun:stun2.l.google.com:19302' },
-                    { urls: 'stun:stun3.l.google.com:19302' },
-                    { urls: 'stun:stun4.l.google.com:19302' }
+                    { urls: 'stun:openrelay.metered.ca:80' },
+                    { 
+                        urls: 'turn:openrelay.metered.ca:80',
+                        username: 'openrelayproject',
+                        credential: 'openrelayproject'
+                    },
+                    { 
+                        urls: 'turn:openrelay.metered.ca:443',
+                        username: 'openrelayproject',
+                        credential: 'openrelayproject'
+                    }
                 ]
             },
-            debug: 1
+            debug: 2
         });
 
         peer.on('open', (id) => {
             myId = id;
-            document.getElementById('peer-status').innerText = 'Готово! Ваш код комнаты: ' + id;
+            statusEl.innerText = 'Готово! Код вашей комнаты: ' + id;
             document.getElementById('btn-host').disabled = false;
             document.getElementById('btn-join').disabled = false;
         });
@@ -103,14 +122,13 @@
         });
 
         peer.on('error', (err) => {
-            console.error('Peer error:', err);
-            document.getElementById('peer-status').innerText = 'Ошибка соединения. Перезагрузите страницу.';
+            logError('Ошибка PeerJS: ' + err.type + ' — ' + err);
         });
     }
 
     function createRoom() {
         isHost = true;
-        document.getElementById('peer-status').innerText = 'Ждем подключения... Код: ' + myId;
+        statusEl.innerText = 'Ждем подключения Рауанны... Код: ' + myId;
         document.getElementById('btn-host').disabled = true;
     }
 
@@ -118,13 +136,25 @@
         const code = document.getElementById('room-input').value.trim();
         if (!code) return alert('Введите код!');
         isHost = false;
-        document.getElementById('peer-status').innerText = 'Соединение с ' + code + '...';
+        statusEl.innerText = 'Подключение к ' + code + '...';
+        errorEl.innerText = '';
+
         conn = peer.connect(code, { reliable: true });
+        
+        // Таймаут подключения 12 секунд
+        connectTimeout = setTimeout(() => {
+            if (!conn || !conn.open) {
+                logError('Не удалось подключиться за 12 сек. Проверь код комнаты или пересоздай её.');
+                statusEl.innerText = 'Ошибка соединения';
+            }
+        }, 12000);
+
         setupConnection();
     }
 
     function setupConnection() {
         conn.on('open', () => {
+            if (connectTimeout) clearTimeout(connectTimeout);
             document.getElementById('lobby').style.display = 'none';
             if (isHost) {
                 spawnItems();
@@ -155,8 +185,12 @@
             }
         });
 
+        conn.on('error', (err) => {
+            logError('Ошибка канала связи: ' + err);
+        });
+
         conn.on('close', () => {
-            alert('Соединение разорвано');
+            alert('Соединение размонтировано');
             location.reload();
         });
     }

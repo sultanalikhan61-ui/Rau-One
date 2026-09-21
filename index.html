@@ -27,14 +27,14 @@
 
     <div id="lobby">
         <h2>Slime Quest 💖</h2>
-        <p id="peer-status">Подключение к сети...</p>
+        <p id="peer-status">Подключение к международному серверу...</p>
         <div style="display:flex; gap:10px;">
-            <button id="btn-host" onclick="createRoom()">Создать (Я Слайм)</button>
+            <button id="btn-host" onclick="createRoom()" disabled>Создать (Я Слайм)</button>
         </div>
         <hr style="width: 200px; border-color: #444;">
         <div>
             <input type="text" id="room-input" placeholder="Код комнаты">
-            <button onclick="joinRoom()">Войти (Я Искатель)</button>
+            <button id="btn-join" onclick="joinRoom()" disabled>Войти (Я Искатель)</button>
         </div>
     </div>
 
@@ -75,11 +75,26 @@
 
     function initPeer() {
         const roomCode = Math.floor(1000 + Math.random() * 9000).toString();
-        peer = new Peer(roomCode);
+        
+        // Добавляем международные STUN-серверы Google для обхода блокировок между KZ и UK
+        peer = new Peer(roomCode, {
+            config: {
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun1.l.google.com:19302' },
+                    { urls: 'stun:stun2.l.google.com:19302' },
+                    { urls: 'stun:stun3.l.google.com:19302' },
+                    { urls: 'stun:stun4.l.google.com:19302' }
+                ]
+            },
+            debug: 1
+        });
 
         peer.on('open', (id) => {
             myId = id;
-            document.getElementById('peer-status').innerText = 'Ваш код комнаты: ' + id;
+            document.getElementById('peer-status').innerText = 'Готово! Ваш код комнаты: ' + id;
+            document.getElementById('btn-host').disabled = false;
+            document.getElementById('btn-join').disabled = false;
         });
 
         peer.on('connection', (c) => {
@@ -88,7 +103,8 @@
         });
 
         peer.on('error', (err) => {
-            alert('Ошибка сети: ' + err.type);
+            console.error('Peer error:', err);
+            document.getElementById('peer-status').innerText = 'Ошибка соединения. Перезагрузите страницу.';
         });
     }
 
@@ -102,7 +118,8 @@
         const code = document.getElementById('room-input').value.trim();
         if (!code) return alert('Введите код!');
         isHost = false;
-        conn = peer.connect(code);
+        document.getElementById('peer-status').innerText = 'Соединение с ' + code + '...';
+        conn = peer.connect(code, { reliable: true });
         setupConnection();
     }
 
@@ -120,7 +137,6 @@
         conn.on('data', (data) => {
             if (isHost) {
                 if (data.type === 'player_move') {
-                    // Перемещаем игрока на основе вектора от её джойстика
                     player.x += data.dx * player.speed;
                     player.y += data.dy * player.speed;
                     player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
@@ -137,6 +153,11 @@
                     scoreEl.innerText = score;
                 }
             }
+        });
+
+        conn.on('close', () => {
+            alert('Соединение разорвано');
+            location.reload();
         });
     }
 
@@ -192,13 +213,11 @@
         if (keys['ArrowDown'] || keys['s']) dy = 1;
 
         if (isHost) {
-            // Движение Слайма (Хост)
             slime.x += dx * slime.speed;
             slime.y += dy * slime.speed;
             slime.x = Math.max(slime.radius, Math.min(canvas.width - slime.radius, slime.x));
             slime.y = Math.max(slime.radius, Math.min(canvas.height - slime.radius, slime.y));
 
-            // Проверка сбора предметов (Только на Хосте)
             items.forEach(it => {
                 if (!it.collected && Math.hypot(player.x - it.x, player.y - it.y) < player.radius + 15) {
                     it.collected = true;
@@ -206,7 +225,6 @@
                 }
             });
 
-            // Касание Слайма
             const distToPlayer = Math.hypot(slime.x - player.x, slime.y - player.y);
             if (distToPlayer < slime.radius + player.radius) {
                 if (score > 0) score--;
@@ -214,7 +232,6 @@
                 player.y += (player.y - slime.y) * 0.4;
             }
 
-            // Отправка точного состояния
             if (conn && conn.open) {
                 conn.send({
                     type: 'state',
@@ -225,7 +242,6 @@
                 });
             }
         } else {
-            // Отправка векторов от Искателя Хосту
             if (conn && conn.open) {
                 conn.send({
                     type: 'player_move',

@@ -7,18 +7,21 @@
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
-        body { background: #1a1a24; color: #fff; font-family: sans-serif; text-align: center; overflow: hidden; height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; }
-        #lobby { position: absolute; z-index: 10; background: rgba(26,26,36,0.95); width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 15px; padding: 20px; }
+        body { background: #1a1a24; color: #fff; font-family: sans-serif; text-align: center; overflow: hidden; height: 100vh; display: flex; flex-direction: column; justify-content: flex-start; align-items: center; padding-top: 10px; }
+        #lobby { position: absolute; top:0; left:0; z-index: 10; background: rgba(26,26,36,0.98); width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 15px; padding: 20px; }
         input, button { padding: 12px 20px; font-size: 16px; border-radius: 8px; border: none; outline: none; }
         button { background: #ff4757; color: white; font-weight: bold; cursor: pointer; }
         button:disabled { background: #555; }
         input { text-align: center; width: 200px; }
-        #game-container { position: relative; width: 100vw; height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-        canvas { background: #2f3542; border: 3px solid #ff4757; border-radius: 12px; max-width: 95vw; max-height: 70vh; touch-action: none; }
-        #ui { position: absolute; top: 15px; font-size: 18px; font-weight: bold; background: rgba(0,0,0,0.6); padding: 8px 16px; border-radius: 20px; z-index: 5; }
-        /* Виртуальный джойстик */
-        #joystick-zone { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); width: 120px; height: 120px; background: rgba(255,255,255,0.1); border-radius: 50%; border: 2px solid rgba(255,255,255,0.3); touch-action: none; display: flex; justify-content: center; align-items: center; }
-        #joystick-knob { width: 50px; height: 50px; background: #ff4757; border-radius: 50%; position: absolute; }
+        
+        #game-container { position: relative; width: 100vw; display: flex; flex-direction: column; align-items: center; }
+        canvas { background: #2f3542; border: 3px solid #ff4757; border-radius: 12px; max-width: 95vw; max-height: 55vh; touch-action: none; }
+        #ui { margin-bottom: 8px; font-size: 18px; font-weight: bold; background: rgba(0,0,0,0.6); padding: 8px 16px; border-radius: 20px; z-index: 5; }
+        
+        /* Исправленный джойстик - поднят выше для телефонов */
+        #joystick-container { margin-top: 15px; width: 100%; display: flex; justify-content: center; align-items: center; height: 130px; }
+        #joystick-zone { width: 110px; height: 110px; background: rgba(255,255,255,0.12); border-radius: 50%; border: 2px solid rgba(255,255,255,0.3); touch-action: none; display: flex; justify-content: center; align-items: center; position: relative; }
+        #joystick-knob { width: 45px; height: 45px; background: #ff4757; border-radius: 50%; position: absolute; box-shadow: 0 0 10px rgba(255,71,87,0.5); }
     </style>
 </head>
 <body>
@@ -37,10 +40,12 @@
     </div>
 
     <div id="game-container">
-        <div id="ui">Собрано сердечек: <span id="score">0</span> / 10</div>
+        <div id="ui">Собрано предметов: <span id="score">0</span> / 10</div>
         <canvas id="canvas" width="600" height="600"></canvas>
-        <div id="joystick-zone">
-            <div id="joystick-knob"></div>
+        <div id="joystick-container">
+            <div id="joystick-zone">
+                <div id="joystick-knob"></div>
+            </div>
         </div>
     </div>
 
@@ -54,17 +59,30 @@
     let isHost = false;
     let myId = '';
 
-    // Игровые объекты
-    let player = { x: 100, y: 100, radius: 15, color: '#2ed573', speed: 4 }; // Искатель (Она)
-    let slime = { x: 500, y: 500, radius: 20, color: '#ff4757', speed: 3.5 };  // Слайм (Ты)
-    let hearts = [];
+    // Игровые персонажи
+    let player = { x: 100, y: 100, radius: 18, color: '#2ed573', speed: 4 }; // Искатель (Она)
+    let slime = { x: 500, y: 500, radius: 22, color: '#ff4757', speed: 3.5 };  // Слайм (Ты)
+    let items = [];
     let score = 0;
     let keys = {};
     let inputVector = { x: 0, y: 0 };
 
-    // Инициализация PeerJS
+    // Набор икон/эмодзи предметов
+    const ITEM_TYPES = ['❤️', '☕', '🍫', '🍪', '🎁', '✨', '🧸'];
+
+    /* 
+       --- ИНСТРУКЦИЯ ДЛЯ СВОИХ КАРТИНОК / ФОТО: ---
+       1. Загрузи картинки в репозиторий (например photo1.jpg, photo2.jpg).
+       2. Раскомментируй код ниже:
+       
+       const myPhotos = ['photo1.jpg', 'photo2.jpg'].map(src => {
+           let img = new Image();
+           img.src = src;
+           return img;
+       });
+    */
+
     function initPeer() {
-        // Генерация короткого кода комнаты из 4 цифр
         const roomCode = Math.floor(1000 + Math.random() * 9000).toString();
         peer = new Peer(roomCode);
 
@@ -85,7 +103,7 @@
 
     function createRoom() {
         isHost = true;
-        document.getElementById('peer-status').innerText = 'Ждем подключения Искателя... Код: ' + myId;
+        document.getElementById('peer-status').innerText = 'Ждем подключения... Код: ' + myId;
         document.getElementById('btn-host').disabled = true;
     }
 
@@ -101,7 +119,7 @@
         conn.on('open', () => {
             document.getElementById('lobby').style.display = 'none';
             if (isHost) {
-                spawnHearts();
+                spawnItems();
                 gameLoop();
             } else {
                 gameLoop();
@@ -110,17 +128,15 @@
 
         conn.on('data', (data) => {
             if (isHost) {
-                // Хост (Слайм) получает координаты Искателя
                 if (data.type === 'player_move') {
                     player.x = data.x;
                     player.y = data.y;
                 }
             } else {
-                // Клиент (Искатель) получает состояние игры от Хоста
                 if (data.type === 'state') {
                     slime.x = data.slime.x;
                     slime.y = data.slime.y;
-                    hearts = data.hearts;
+                    items = data.items;
                     score = data.score;
                     scoreEl.innerText = score;
                 }
@@ -128,26 +144,26 @@
         });
     }
 
-    function spawnHearts() {
-        hearts = [];
+    function spawnItems() {
+        items = [];
         for (let i = 0; i < 10; i++) {
-            hearts.push({
-                x: 30 + Math.random() * (canvas.width - 60),
-                y: 30 + Math.random() * (canvas.height - 60),
+            const icon = ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)];
+            items.push({
+                x: 40 + Math.random() * (canvas.width - 80),
+                y: 40 + Math.random() * (canvas.height - 80),
+                icon: icon,
                 collected: false
             });
         }
     }
 
-    // Джойстик управления
+    // Улучшенный джойстик
     const joyZone = document.getElementById('joystick-zone');
     const joyKnob = document.getElementById('joystick-knob');
-    let joyActive = false;
 
-    joyZone.addEventListener('touchstart', handleTouch);
-    joyZone.addEventListener('touchmove', handleTouch);
+    joyZone.addEventListener('touchstart', handleTouch, { passive: false });
+    joyZone.addEventListener('touchmove', handleTouch, { passive: false });
     joyZone.addEventListener('touchend', () => {
-        joyActive = false;
         joyKnob.style.transform = `translate(0px, 0px)`;
         inputVector = { x: 0, y: 0 };
     });
@@ -158,17 +174,16 @@
         const touch = e.touches[0];
         const dx = touch.clientX - (rect.left + rect.width / 2);
         const dy = touch.clientY - (rect.top + rect.height / 2);
-        const dist = Math.min(Math.hypot(dx, dy), 45);
+        const dist = Math.min(Math.hypot(dx, dy), 40);
         const angle = Math.atan2(dy, dx);
 
         const joyX = Math.cos(angle) * dist;
         const joyY = Math.sin(angle) * dist;
 
         joyKnob.style.transform = `translate(${joyX}px, ${joyY}px)`;
-        inputVector = { x: Math.cos(angle) * (dist / 45), y: Math.sin(angle) * (dist / 45) };
+        inputVector = { x: Math.cos(angle) * (dist / 40), y: Math.sin(angle) * (dist / 40) };
     }
 
-    // Клавиатура для ПК
     window.addEventListener('keydown', e => keys[e.key] = true);
     window.addEventListener('keyup', e => keys[e.key] = false);
 
@@ -182,46 +197,39 @@
         if (keys['ArrowDown'] || keys['s']) dy = 1;
 
         if (isHost) {
-            // Движение Слайма (Тебя)
             slime.x += dx * slime.speed;
             slime.y += dy * slime.speed;
             slime.x = Math.max(slime.radius, Math.min(canvas.width - slime.radius, slime.x));
             slime.y = Math.max(slime.radius, Math.min(canvas.height - slime.radius, slime.y));
 
-            // Проверка столкновения Слайма и Искателя (помеха)
             const distToPlayer = Math.hypot(slime.x - player.x, slime.y - player.y);
             if (distToPlayer < slime.radius + player.radius) {
-                if (score > 0) score--; // Отнимаем очко за касание
-                // Отталкивание
-                player.x += (player.x - slime.x) * 0.5;
-                player.y += (player.y - slime.y) * 0.5;
+                if (score > 0) score--;
+                player.x += (player.x - slime.x) * 0.4;
+                player.y += (player.y - slime.y) * 0.4;
             }
 
-            // Отправка состояния Клиенту
             if (conn && conn.open) {
                 conn.send({
                     type: 'state',
                     slime: { x: slime.x, y: slime.y },
-                    hearts: hearts,
+                    items: items,
                     score: score
                 });
             }
         } else {
-            // Движение Искателя (Её)
             player.x += dx * player.speed;
             player.y += dy * player.speed;
             player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
             player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, player.y));
 
-            // Проверка сбора сердечек
-            hearts.forEach(h => {
-                if (!h.collected && Math.hypot(player.x - h.x, player.y - h.y) < player.radius + 10) {
-                    h.collected = true;
+            items.forEach(it => {
+                if (!it.collected && Math.hypot(player.x - it.x, player.y - it.y) < player.radius + 15) {
+                    it.collected = true;
                     score++;
                 }
             });
 
-            // Отправка координат Хосту
             if (conn && conn.open) {
                 conn.send({
                     type: 'player_move',
@@ -233,34 +241,37 @@
 
         scoreEl.innerText = score;
         if (score >= 10) {
-            setTimeout(() => alert(isHost ? 'Она собрала все сердечки и победила! ❤️' : 'Ура! Ты собрала все сердечки! ❤️'), 100);
+            setTimeout(() => alert(isHost ? 'Она собрала все вкусняшки и победила! ❤️' : 'Ура! Ты собрала все подарки! ❤️'), 100);
         }
     }
 
     function draw() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // Отрисовка сердечек
-        hearts.forEach(h => {
-            if (!h.collected) {
-                ctx.fillStyle = '#ff6b81';
-                ctx.beginPath();
-                ctx.arc(h.x, h.y, 8, 0, Math.PI * 2);
-                ctx.fill();
+        // Отрисовка предмета (эмодзи иконки)
+        ctx.font = '24px serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        items.forEach(it => {
+            if (!it.collected) {
+                ctx.fillText(it.icon, it.x, it.y);
             }
         });
 
-        // Отрисовка Искателя (Зеленый круг)
+        // Отрисовка Искателя (Зеленый персонаж)
         ctx.fillStyle = player.color;
         ctx.beginPath();
         ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
         ctx.fill();
+        ctx.fillText('👸', player.x, player.y);
 
-        // Отрисовка Слайма (Красный круг)
+        // Отрисовка Слайма (Красный персонаж)
         ctx.fillStyle = slime.color;
         ctx.beginPath();
         ctx.arc(slime.x, slime.y, slime.radius, 0, Math.PI * 2);
         ctx.fill();
+        ctx.fillText('👾', slime.x, slime.y);
     }
 
     function gameLoop() {

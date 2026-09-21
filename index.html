@@ -32,7 +32,7 @@
 
     <div id="lobby">
         <h2>Slime & Racing Hub 💖</h2>
-        <p id="status">Подключение к международной сети...</p>
+        <p id="status">Подключение к сети...</p>
         
         <div style="margin: 5px 0;">
             <p style="font-size: 14px; margin-bottom: 5px; color: #aaa;">Выберите режим игры (для Хоста):</p>
@@ -70,21 +70,20 @@
     let client = null;
     let roomCode = '';
     let isHost = false;
-    let selectedGameMode = 'slime'; // 'slime' или 'racing'
+    let selectedGameMode = 'slime';
     let lastNetworkSend = 0;
+    let lastFrameTime = performance.now();
 
     const boyImg = new Image(); boyImg.src = 'boy.jpg';
     const girlImg = new Image(); girlImg.src = 'girl.jpg';
 
-    // Состояния игроков
-    let player = { x: 100, y: 100, targetX: 100, targetY: 100, radius: 22, speed: 4, score: 0 };
-    let slime = { x: 500, y: 500, targetX: 500, targetY: 500, radius: 24, speed: 4, score: 0 };
+    // Объекты с поддержкой целевых позиций для сглаживания
+    let player = { x: 100, y: 100, targetX: 100, targetY: 100, radius: 22, speed: 280 };
+    let slime = { x: 500, y: 500, targetX: 500, targetY: 500, radius: 24, speed: 300 };
     
-    // Переменные для гонок
     let roadOffset = 0;
     let obstacles = [];
     let coinItems = [];
-
     let items = [];
     let score = 0;
     let keys = {};
@@ -102,7 +101,7 @@
         client = mqtt.connect('wss://broker.hivemq.com:8884/mqtt');
 
         client.on('connect', () => {
-            statusEl.innerText = 'Подключено! Выберите режим и создайте комнату или воспользуйтесь кодом.';
+            statusEl.innerText = 'Подключено! Выберите режим и создайте комнату.';
             document.getElementById('btn-host').disabled = false;
             document.getElementById('btn-join').disabled = false;
         });
@@ -111,10 +110,7 @@
             const data = JSON.parse(message.toString());
 
             if (data.type === 'join_request' && isHost) {
-                client.publish(`slime_game_${roomCode}`, JSON.stringify({ 
-                    type: 'game_start', 
-                    mode: selectedGameMode 
-                }));
+                client.publish(`slime_game_${roomCode}`, JSON.stringify({ type: 'game_start', mode: selectedGameMode }));
                 startGame();
             }
 
@@ -123,24 +119,13 @@
                 startGame();
             }
 
-            if (isHost && data.type === 'player_move') {
-                if (selectedGameMode === 'slime') {
-                    player.x += data.dx * player.speed;
-                    player.y += data.dy * player.speed;
-                    if (player.x < 0) player.x = canvas.width;
-                    else if (player.x > canvas.width) player.x = 0;
-                    if (player.y < 0) player.y = canvas.height;
-                    else if (player.y > canvas.height) player.y = 0;
-                } else if (selectedGameMode === 'racing') {
-                    player.x += data.dx * 6;
-                    player.y += data.dy * 4;
-                    player.x = Math.max(160, Math.min(440, player.x));
-                    player.y = Math.max(100, Math.min(520, player.y));
-                }
+            // Хост получает вектор ввода клиента и мгновенно применяет физику
+            if (isHost && data.type === 'client_input') {
+                player.inputVector = data.vector;
             }
 
+            // Клиент получает сглаженные состояния
             if (!isHost && data.type === 'state') {
-                // Плавная интерполяция
                 slime.targetX = data.slime.x;
                 slime.targetY = data.slime.y;
                 player.targetX = data.player.x;
@@ -150,7 +135,6 @@
                 obstacles = data.obstacles || [];
                 roadOffset = data.roadOffset || 0;
                 score = data.score;
-                scoreEl.innerText = score;
             }
         });
 
@@ -161,7 +145,7 @@
         isHost = true;
         roomCode = Math.floor(1000 + Math.random() * 9000).toString();
         client.subscribe(`slime_game_${roomCode}`);
-        statusEl.innerText = 'Ждем подключения... Код комнаты: ' + roomCode;
+        statusEl.innerText = 'Код комнаты: ' + roomCode + ' (Ждем подключения...)';
         document.getElementById('btn-host').disabled = true;
     }
 
@@ -171,23 +155,25 @@
         isHost = false;
         roomCode = code;
         client.subscribe(`slime_game_${roomCode}`);
-        statusEl.innerText = 'Подключение к ' + roomCode + '...';
+        statusEl.innerText = 'Подключение...';
         setTimeout(() => {
             client.publish(`slime_game_${roomCode}`, JSON.stringify({ type: 'join_request' }));
-        }, 500);
+        }, 300);
     }
 
     function startGame() {
         document.getElementById('lobby').style.display = 'none';
+        player.inputVector = { x: 0, y: 0 };
         if (selectedGameMode === 'racing') {
             uiTitle.innerText = 'Очки гонки:';
-            player.x = 220; player.y = 480;
-            slime.x = 380; slime.y = 480;
+            player.x = player.targetX = 220; player.y = player.targetY = 480;
+            slime.x = slime.targetX = 380; slime.y = slime.targetY = 480;
             if (isHost) spawnRacingElements();
         } else {
             uiTitle.innerText = 'Собрано предметов:';
             if (isHost) spawnItems();
         }
+        lastFrameTime = performance.now();
         gameLoop();
     }
 
@@ -205,8 +191,8 @@
 
     function spawnRacingElements() {
         obstacles = [
-            { x: 200, y: -100, speed: 4, color: '#e74c3c' },
-            { x: 350, y: -350, speed: 5, color: '#3498db' }
+            { x: 200, y: -100, speed: 250, color: '#e74c3c' },
+            { x: 350, y: -350, speed: 300, color: '#3498db' }
         ];
         coinItems = [
             { x: 280, y: -200, icon: '🪙', collected: false },
@@ -239,7 +225,7 @@
     window.addEventListener('keydown', e => keys[e.key] = true);
     window.addEventListener('keyup', e => keys[e.key] = false);
 
-    function update() {
+    function update(dt, now) {
         let dx = inputVector.x;
         let dy = inputVector.y;
         if (keys['ArrowLeft'] || keys['a']) dx = -1;
@@ -247,120 +233,114 @@
         if (keys['ArrowUp'] || keys['w']) dy = -1;
         if (keys['ArrowDown'] || keys['s']) dy = 1;
 
-        const now = Date.now();
+        if (isHost) {
+            // Хост управляет Слаймом напрямую
+            let pVector = player.inputVector || { x: 0, y: 0 };
 
-        if (selectedGameMode === 'slime') {
-            updateSlimeMode(dx, dy, now);
+            if (selectedGameMode === 'slime') {
+                slime.x += dx * slime.speed * dt;
+                slime.y += dy * slime.speed * dt;
+                slime.x = Math.max(slime.radius, Math.min(canvas.width - slime.radius, slime.x));
+                slime.y = Math.max(slime.radius, Math.min(canvas.height - slime.radius, slime.y));
+
+                // Движение игрока
+                player.x += pVector.x * player.speed * dt;
+                player.y += pVector.y * player.speed * dt;
+                if (player.x < 0) player.x = canvas.width;
+                else if (player.x > canvas.width) player.x = 0;
+                if (player.y < 0) player.y = canvas.height;
+                else if (player.y > canvas.height) player.y = 0;
+
+                // Предметы
+                items.forEach(it => {
+                    if (!it.collected && Math.hypot(player.x - it.x, player.y - it.y) < player.radius + 15) {
+                        it.collected = true; score++;
+                    }
+                });
+
+                // Столкновение
+                if (Math.hypot(slime.x - player.x, slime.y - player.y) < slime.radius + player.radius) {
+                    if (score > 0) {
+                        score--;
+                        const collectedItem = items.find(it => it.collected);
+                        if (collectedItem) {
+                            collectedItem.collected = false;
+                            collectedItem.x = 40 + Math.random() * (canvas.width - 80);
+                            collectedItem.y = 40 + Math.random() * (canvas.height - 80);
+                        }
+                    }
+                    const angle = Math.atan2(player.y - slime.y, player.x - slime.x);
+                    player.x += Math.cos(angle) * 50; player.y += Math.sin(angle) * 50;
+                }
+            } else {
+                // Гонки
+                roadOffset = (roadOffset + 400 * dt) % 40;
+
+                slime.x += dx * 350 * dt;
+                slime.y += dy * 250 * dt;
+                slime.x = Math.max(160, Math.min(440, slime.x));
+                slime.y = Math.max(100, Math.min(520, slime.y));
+
+                player.x += pVector.x * 350 * dt;
+                player.y += pVector.y * 250 * dt;
+                player.x = Math.max(160, Math.min(440, player.x));
+                player.y = Math.max(100, Math.min(520, player.y));
+
+                obstacles.forEach(obs => {
+                    obs.y += obs.speed * dt;
+                    if (obs.y > canvas.height + 50) {
+                        obs.y = -100; obs.x = 180 + Math.random() * 240;
+                    }
+                    if (Math.hypot(slime.x - obs.x, slime.y - obs.y) < 35 || Math.hypot(player.x - obs.x, player.y - obs.y) < 35) {
+                        obs.y = -100; if (score > 0) score--;
+                    }
+                });
+
+                coinItems.forEach(coin => {
+                    coin.y += 200 * dt;
+                    if (coin.y > canvas.height + 50) {
+                        coin.y = -100; coin.x = 180 + Math.random() * 240; coin.collected = false;
+                    }
+                    if (!coin.collected && (Math.hypot(slime.x - coin.x, slime.y - coin.y) < 30 || Math.hypot(player.x - coin.x, player.y - coin.y) < 30)) {
+                        coin.collected = true; score++;
+                    }
+                });
+            }
+
+            // Отправка состояния 30 раз в секунду
+            if (now - lastNetworkSend > 33) {
+                client.publish(`slime_game_${roomCode}`, JSON.stringify({
+                    type: 'state', slime: { x: slime.x, y: slime.y }, player: { x: player.x, y: player.y },
+                    items: items, obstacles: obstacles, coinItems: coinItems, roadOffset: roadOffset, score: score
+                }));
+                lastNetworkSend = now;
+            }
         } else {
-            updateRacingMode(dx, dy, now);
-        }
+            // Клиент: предсказание собственного движения для 60 FPS отклика
+            if (selectedGameMode === 'slime') {
+                player.x += dx * player.speed * dt;
+                player.y += dy * player.speed * dt;
+            } else {
+                player.x += dx * 350 * dt;
+                player.y += dy * 250 * dt;
+                player.x = Math.max(160, Math.min(440, player.x));
+                player.y = Math.max(100, Math.min(520, player.y));
+            }
 
-        // Интерполяция движения на клиенте (сглаживает сетевые лаги)
-        if (!isHost) {
-            slime.x += (slime.targetX - slime.x) * 0.3;
-            slime.y += (slime.targetY - slime.y) * 0.3;
-            player.x += (player.targetX - player.x) * 0.3;
-            player.y += (player.targetY - player.y) * 0.3;
+            // Отправляем векторы ввода 30 раз в сек
+            if (now - lastNetworkSend > 33) {
+                client.publish(`slime_game_${roomCode}`, JSON.stringify({ type: 'client_input', vector: { x: dx, y: dy } }));
+                lastNetworkSend = now;
+            }
+
+            // Плавно подтягиваем позиции с сервера (Lerp)
+            slime.x += (slime.targetX - slime.x) * 0.15;
+            slime.y += (slime.targetY - slime.y) * 0.15;
+            player.x += (player.targetX - player.x) * 0.1;
+            player.y += (player.targetY - player.y) * 0.1;
         }
 
         scoreEl.innerText = score;
-    }
-
-    function updateSlimeMode(dx, dy, now) {
-        if (isHost) {
-            slime.x += dx * (slime.speed * 1.15);
-            slime.y += dy * (slime.speed * 1.15);
-            slime.x = Math.max(slime.radius, Math.min(canvas.width - slime.radius, slime.x));
-            slime.y = Math.max(slime.radius, Math.min(canvas.height - slime.radius, slime.y));
-
-            items.forEach(it => {
-                if (!it.collected && Math.hypot(player.x - it.x, player.y - it.y) < player.radius + 15) {
-                    it.collected = true;
-                    score++;
-                }
-            });
-
-            const dist = Math.hypot(slime.x - player.x, slime.y - player.y);
-            if (dist < slime.radius + player.radius) {
-                if (score > 0) {
-                    score--;
-                    const collectedItem = items.find(it => it.collected);
-                    if (collectedItem) {
-                        collectedItem.collected = false;
-                        collectedItem.x = 40 + Math.random() * (canvas.width - 80);
-                        collectedItem.y = 40 + Math.random() * (canvas.height - 80);
-                    }
-                }
-                const angle = Math.atan2(player.y - slime.y, player.x - slime.x);
-                player.x += Math.cos(angle) * 50;
-                player.y += Math.sin(angle) * 50;
-            }
-
-            // Ограничение отправки по сети (20 раз в сек)
-            if (now - lastNetworkSend > 50) {
-                client.publish(`slime_game_${roomCode}`, JSON.stringify({
-                    type: 'state', slime: { x: slime.x, y: slime.y }, player: { x: player.x, y: player.y }, items: items, score: score
-                }));
-                lastNetworkSend = now;
-            }
-        } else {
-            if ((dx !== 0 || dy !== 0) && now - lastNetworkSend > 50) {
-                client.publish(`slime_game_${roomCode}`, JSON.stringify({ type: 'player_move', dx: dx, dy: dy }));
-                lastNetworkSend = now;
-            }
-        }
-    }
-
-    function updateRacingMode(dx, dy, now) {
-        if (isHost) {
-            roadOffset = (roadOffset + 8) % 40;
-
-            slime.x += dx * 6;
-            slime.y += dy * 4;
-            slime.x = Math.max(160, Math.min(440, slime.x));
-            slime.y = Math.max(100, Math.min(520, slime.y));
-
-            // Движение машин-препятствий
-            obstacles.forEach(obs => {
-                obs.y += obs.speed + 3;
-                if (obs.y > canvas.height + 50) {
-                    obs.y = -100;
-                    obs.x = 180 + Math.random() * 240;
-                }
-                // Столкновения
-                if (Math.hypot(slime.x - obs.x, slime.y - obs.y) < 35 || Math.hypot(player.x - obs.x, player.y - obs.y) < 35) {
-                    obs.y = -100;
-                    if (score > 0) score--;
-                }
-            });
-
-            // Монетки
-            coinItems.forEach(coin => {
-                coin.y += 4;
-                if (coin.y > canvas.height + 50) {
-                    coin.y = -100;
-                    coin.x = 180 + Math.random() * 240;
-                    coin.collected = false;
-                }
-                if (!coin.collected && (Math.hypot(slime.x - coin.x, slime.y - coin.y) < 30 || Math.hypot(player.x - coin.x, player.y - coin.y) < 30)) {
-                    coin.collected = true;
-                    score++;
-                }
-            });
-
-            if (now - lastNetworkSend > 50) {
-                client.publish(`slime_game_${roomCode}`, JSON.stringify({
-                    type: 'state', slime: { x: slime.x, y: slime.y }, player: { x: player.x, y: player.y },
-                    obstacles: obstacles, coinItems: coinItems, roadOffset: roadOffset, score: score
-                }));
-                lastNetworkSend = now;
-            }
-        } else {
-            if ((dx !== 0 || dy !== 0) && now - lastNetworkSend > 50) {
-                client.publish(`slime_game_${roomCode}`, JSON.stringify({ type: 'player_move', dx: dx, dy: dy }));
-                lastNetworkSend = now;
-            }
-        }
     }
 
     function drawAvatar(img, x, y, radius, borderColor) {
@@ -381,12 +361,9 @@
     function drawCar(x, y, color, img, borderColor) {
         ctx.save();
         ctx.fillStyle = color;
-        ctx.shadowColor = 'rgba(0,0,0,0.5)';
-        ctx.shadowBlur = 10;
-        ctx.fillRect(x - 20, y - 35, 40, 70); // Корпус
+        ctx.shadowColor = 'rgba(0,0,0,0.4)'; ctx.shadowBlur = 8;
+        ctx.fillRect(x - 20, y - 35, 40, 70);
         ctx.restore();
-
-        // Аватарка на крыше машины
         drawAvatar(img, x, y, 16, borderColor);
     }
 
@@ -399,36 +376,33 @@
             drawAvatar(girlImg, player.x, player.y, player.radius, '#2ed573');
             drawAvatar(boyImg, slime.x, slime.y, slime.radius, '#ff4757');
         } else {
-            // Отрисовка трассы
-            ctx.fillStyle = '#555';
-            ctx.fillRect(120, 0, 360, canvas.height); // Дорога
-            ctx.fillStyle = '#222';
-            ctx.fillRect(0, 0, 120, canvas.height); ctx.fillRect(480, 0, 120, canvas.height); // Обочины
+            ctx.fillStyle = '#555'; ctx.fillRect(120, 0, 360, canvas.height);
+            ctx.fillStyle = '#222'; ctx.fillRect(0, 0, 120, canvas.height); ctx.fillRect(480, 0, 120, canvas.height);
 
-            // Разметка
             ctx.strokeStyle = '#fff'; ctx.lineWidth = 6; ctx.setLineDash([30, 20]);
             ctx.lineDashOffset = -roadOffset;
             ctx.beginPath(); ctx.moveTo(300, 0); ctx.lineTo(300, canvas.height); ctx.stroke();
-            ctx.setLineDash([]); // Сброс штрихов
+            ctx.setLineDash([]);
 
-            // Монетки
             ctx.font = '24px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
             coinItems.forEach(coin => { if (!coin.collected) ctx.fillText(coin.icon, coin.x, coin.y); });
 
-            // Машины-препятствия
             obstacles.forEach(obs => {
                 ctx.fillStyle = obs.color;
                 ctx.fillRect(obs.x - 18, obs.y - 30, 36, 60);
             });
 
-            // Машинки игроков
             drawCar(player.x, player.y, '#2ed573', girlImg, '#2ed573');
             drawCar(slime.x, slime.y, '#ff4757', boyImg, '#ff4757');
         }
     }
 
     function gameLoop() {
-        update();
+        const now = performance.now();
+        const dt = Math.min((now - lastFrameTime) / 1000, 0.1); // Ограничение dt для исключения скачков
+        lastFrameTime = now;
+
+        update(dt, now);
         draw();
         requestAnimationFrame(gameLoop);
     }

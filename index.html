@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Slime vs Collector</title>
-    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <!-- Используем MQTT через WebSocket для 100% соединения между странами -->
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
         body { background: #1a1a24; color: #fff; font-family: sans-serif; text-align: center; overflow: hidden; height: 100vh; display: flex; flex-direction: column; justify-content: flex-start; align-items: center; padding-top: 10px; }
@@ -14,8 +15,7 @@
         button:disabled { background: #555; }
         input { text-align: center; width: 200px; }
         
-        #peer-status { color: #ffbe76; font-size: 15px; max-width: 80%; word-break: break-word; }
-        #error-log { color: #ff4757; font-size: 13px; max-width: 80%; min-height: 20px; }
+        #status { color: #ffbe76; font-size: 15px; max-width: 80%; word-break: break-word; }
 
         #game-container { position: relative; width: 100vw; display: flex; flex-direction: column; align-items: center; }
         canvas { background: #2f3542; border: 3px solid #ff4757; border-radius: 12px; max-width: 95vw; max-height: 55vh; touch-action: none; }
@@ -30,8 +30,7 @@
 
     <div id="lobby">
         <h2>Slime Quest 💖</h2>
-        <p id="peer-status">Подключение к серверу...</p>
-        <p id="error-log"></p>
+        <p id="status">Подключение к международной сети...</p>
         <div style="display:flex; gap:10px;">
             <button id="btn-host" onclick="createRoom()" disabled>Создать (Я Слайм)</button>
         </div>
@@ -56,14 +55,11 @@
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     const scoreEl = document.getElementById('score');
-    const statusEl = document.getElementById('peer-status');
-    const errorEl = document.getElementById('error-log');
+    const statusEl = document.getElementById('status');
 
-    let peer = null;
-    let conn = null;
+    let client = null;
+    let roomCode = '';
     let isHost = false;
-    let myId = '';
-    let connectTimeout = null;
 
     const boyImg = new Image();
     boyImg.src = 'boy.jpg';
@@ -80,55 +76,57 @@
 
     const ITEM_TYPES = ['❤️', '☕', '🍫', '🍪', '🎁', '✨', '🧸'];
 
-    function logError(msg) {
-        console.error(msg);
-        errorEl.innerText = msg;
-    }
+    function initMQTT() {
+        // Публичный защищенный брокер HiveMQ (пробивает любые провайдеры)
+        client = mqtt.connect('wss://broker.hivemq.com:8884/mqtt');
 
-    function initPeer() {
-        const roomCode = Math.floor(1000 + Math.random() * 9000).toString();
-        
-        peer = new Peer(roomCode, {
-            config: {
-                iceServers: [
-                    { urls: 'stun:stun.l.google.com:19302' },
-                    { urls: 'stun:stun1.l.google.com:19302' },
-                    { urls: 'stun:openrelay.metered.ca:80' },
-                    { 
-                        urls: 'turn:openrelay.metered.ca:80',
-                        username: 'openrelayproject',
-                        credential: 'openrelayproject'
-                    },
-                    { 
-                        urls: 'turn:openrelay.metered.ca:443',
-                        username: 'openrelayproject',
-                        credential: 'openrelayproject'
-                    }
-                ]
-            },
-            debug: 2
-        });
-
-        peer.on('open', (id) => {
-            myId = id;
-            statusEl.innerText = 'Готово! Код вашей комнаты: ' + id;
+        client.on('connect', () => {
+            statusEl.innerText = 'Подключено к серверу! Нажми "Создать" или введи код.';
             document.getElementById('btn-host').disabled = false;
             document.getElementById('btn-join').disabled = false;
         });
 
-        peer.on('connection', (c) => {
-            conn = c;
-            setupConnection();
+        client.on('message', (topic, message) => {
+            const data = JSON.parse(message.toString());
+
+            if (data.type === 'join_request' && isHost) {
+                // Пришел гость, запускаем игру
+                client.publish(`slime_game_${roomCode}`, JSON.stringify({ type: 'game_start' }));
+                startGame();
+            }
+
+            if (data.type === 'game_start' && !isHost) {
+                startGame();
+            }
+
+            if (isHost && data.type === 'player_move') {
+                player.x += data.dx * player.speed;
+                player.y += data.dy * player.speed;
+                player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
+                player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, player.y));
+            }
+
+            if (!isHost && data.type === 'state') {
+                slime.x = data.slime.x;
+                slime.y = data.slime.y;
+                player.x = data.player.x;
+                player.y = data.player.y;
+                items = data.items;
+                score = data.score;
+                scoreEl.innerText = score;
+            }
         });
 
-        peer.on('error', (err) => {
-            logError('Ошибка PeerJS: ' + err.type + ' — ' + err);
+        client.on('error', (err) => {
+            statusEl.innerText = 'Ошибка сети: ' + err;
         });
     }
 
     function createRoom() {
         isHost = true;
-        statusEl.innerText = 'Ждем подключения Рауанны... Код: ' + myId;
+        roomCode = Math.floor(1000 + Math.random() * 9000).toString();
+        client.subscribe(`slime_game_${roomCode}`);
+        statusEl.innerText = 'Ждем подключения Рауанны... Код комнаты: ' + roomCode;
         document.getElementById('btn-host').disabled = true;
     }
 
@@ -136,63 +134,23 @@
         const code = document.getElementById('room-input').value.trim();
         if (!code) return alert('Введите код!');
         isHost = false;
-        statusEl.innerText = 'Подключение к ' + code + '...';
-        errorEl.innerText = '';
-
-        conn = peer.connect(code, { reliable: true });
+        roomCode = code;
+        client.subscribe(`slime_game_${roomCode}`);
         
-        // Таймаут подключения 12 секунд
-        connectTimeout = setTimeout(() => {
-            if (!conn || !conn.open) {
-                logError('Не удалось подключиться за 12 сек. Проверь код комнаты или пересоздай её.');
-                statusEl.innerText = 'Ошибка соединения';
-            }
-        }, 12000);
-
-        setupConnection();
+        statusEl.innerText = 'Подключение к комнате ' + roomCode + '...';
+        
+        // Отправляем сигнал о входе
+        setTimeout(() => {
+            client.publish(`slime_game_${roomCode}`, JSON.stringify({ type: 'join_request' }));
+        }, 500);
     }
 
-    function setupConnection() {
-        conn.on('open', () => {
-            if (connectTimeout) clearTimeout(connectTimeout);
-            document.getElementById('lobby').style.display = 'none';
-            if (isHost) {
-                spawnItems();
-                gameLoop();
-            } else {
-                gameLoop();
-            }
-        });
-
-        conn.on('data', (data) => {
-            if (isHost) {
-                if (data.type === 'player_move') {
-                    player.x += data.dx * player.speed;
-                    player.y += data.dy * player.speed;
-                    player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
-                    player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, player.y));
-                }
-            } else {
-                if (data.type === 'state') {
-                    slime.x = data.slime.x;
-                    slime.y = data.slime.y;
-                    player.x = data.player.x;
-                    player.y = data.player.y;
-                    items = data.items;
-                    score = data.score;
-                    scoreEl.innerText = score;
-                }
-            }
-        });
-
-        conn.on('error', (err) => {
-            logError('Ошибка канала связи: ' + err);
-        });
-
-        conn.on('close', () => {
-            alert('Соединение размонтировано');
-            location.reload();
-        });
+    function startGame() {
+        document.getElementById('lobby').style.display = 'none';
+        if (isHost) {
+            spawnItems();
+        }
+        gameLoop();
     }
 
     function spawnItems() {
@@ -266,22 +224,20 @@
                 player.y += (player.y - slime.y) * 0.4;
             }
 
-            if (conn && conn.open) {
-                conn.send({
-                    type: 'state',
-                    slime: { x: slime.x, y: slime.y },
-                    player: { x: player.x, y: player.y },
-                    items: items,
-                    score: score
-                });
-            }
+            client.publish(`slime_game_${roomCode}`, JSON.stringify({
+                type: 'state',
+                slime: { x: slime.x, y: slime.y },
+                player: { x: player.x, y: player.y },
+                items: items,
+                score: score
+            }));
         } else {
-            if (conn && conn.open) {
-                conn.send({
+            if (dx !== 0 || dy !== 0) {
+                client.publish(`slime_game_${roomCode}`, JSON.stringify({
                     type: 'player_move',
                     dx: dx,
                     dy: dy
-                });
+                }));
             }
         }
 
@@ -336,7 +292,7 @@
         requestAnimationFrame(gameLoop);
     }
 
-    initPeer();
+    initMQTT();
 </script>
 </body>
 </html>

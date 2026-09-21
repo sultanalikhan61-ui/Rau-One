@@ -102,8 +102,13 @@
             if (isHost && data.type === 'player_move') {
                 player.x += data.dx * player.speed;
                 player.y += data.dy * player.speed;
-                player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
-                player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, player.y));
+                
+                // Телепорт Сборщика при выходе за границы
+                if (player.x < 0) player.x = canvas.width;
+                else if (player.x > canvas.width) player.x = 0;
+
+                if (player.y < 0) player.y = canvas.height;
+                else if (player.y > canvas.height) player.y = 0;
             }
 
             if (!isHost && data.type === 'state') {
@@ -205,11 +210,23 @@
         if (keys['ArrowDown'] || keys['s']) dy = 1;
 
         if (isHost) {
-            slime.x += dx * slime.speed;
-            slime.y += dy * slime.speed;
+            // Хост (Слайм) двигается немного быстрее для баланса
+            const slimeSpeed = slime.speed * 1.15; 
+            slime.x += dx * slimeSpeed;
+            slime.y += dy * slimeSpeed;
+            
+            // Слайм НЕ проходит сквозь стены
             slime.x = Math.max(slime.radius, Math.min(canvas.width - slime.radius, slime.x));
             slime.y = Math.max(slime.radius, Math.min(canvas.height - slime.radius, slime.y));
 
+            // Проход ИСКА ТЕЛЯ (Сборщика) сквозь стены (Pac-Man effect)
+            if (player.x < 0) player.x = canvas.width;
+            else if (player.x > canvas.width) player.x = 0;
+
+            if (player.y < 0) player.y = canvas.height;
+            else if (player.y > canvas.height) player.y = 0;
+
+            // Проверка сбора предметов
             items.forEach(it => {
                 if (!it.collected && Math.hypot(player.x - it.x, player.y - it.y) < player.radius + 15) {
                     it.collected = true;
@@ -217,30 +234,25 @@
                 }
             });
 
+            // Столкновение Слайма и Сборщика
             const distToPlayer = Math.hypot(slime.x - player.x, slime.y - player.y);
             if (distToPlayer < slime.radius + player.radius) {
-                // Если у нее есть собранные предметы — возвращаем один предмет обратно на поле!
                 if (score > 0) {
                     score--;
-                    // Ищем один из уже собранных предметов и "спавним" его заново
                     const collectedItem = items.find(it => it.collected);
                     if (collectedItem) {
                         collectedItem.collected = false;
                         collectedItem.x = 40 + Math.random() * (canvas.width - 80);
-                        collectedItem.y = 40 + Math.random() * (canvas.width - 80);
+                        collectedItem.y = 40 + Math.random() * (canvas.height - 80);
                     }
                 }
                 
-                // Импульс отталкивания, чтобы они не липли друг к другу
                 const angle = Math.atan2(player.y - slime.y, player.x - slime.x);
-                player.x += Math.cos(angle) * 40;
-                player.y += Math.sin(angle) * 40;
-
-                // Ограничиваем координаты в пределах экрана
-                player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
-                player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, player.y));
+                player.x += Math.cos(angle) * 50;
+                player.y += Math.sin(angle) * 50;
             }
 
+            // Рассылка состояния
             client.publish(`slime_game_${roomCode}`, JSON.stringify({
                 type: 'state',
                 slime: { x: slime.x, y: slime.y },
@@ -249,6 +261,7 @@
                 score: score
             }));
         } else {
+            // Если мы гость (Искатель) — отправляем инпут
             if (dx !== 0 || dy !== 0) {
                 client.publish(`slime_game_${roomCode}`, JSON.stringify({
                     type: 'player_move',
@@ -260,7 +273,7 @@
 
         scoreEl.innerText = score;
         if (score >= 10) {
-            setTimeout(() => alert(isHost ? 'Она собрала все вкусняшки и победила! ❤️' : 'Ура! Ты собрала все подарки! ❤️'), 100);
+            setTimeout(() => alert(isHost ? 'Сборщик победил! ❤️' : 'Ура! Все предметы собраны! ❤️'), 100);
         }
     }
 

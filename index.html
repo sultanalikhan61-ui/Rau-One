@@ -18,7 +18,7 @@
         canvas { background: #2f3542; border: 3px solid #ff4757; border-radius: 12px; max-width: 95vw; max-height: 55vh; touch-action: none; }
         #ui { margin-bottom: 8px; font-size: 18px; font-weight: bold; background: rgba(0,0,0,0.6); padding: 8px 16px; border-radius: 20px; z-index: 5; }
         
-        /* Исправленный джойстик - поднят выше для телефонов */
+        /* Исправленный джойстик */
         #joystick-container { margin-top: 15px; width: 100%; display: flex; justify-content: center; align-items: center; height: 130px; }
         #joystick-zone { width: 110px; height: 110px; background: rgba(255,255,255,0.12); border-radius: 50%; border: 2px solid rgba(255,255,255,0.3); touch-action: none; display: flex; justify-content: center; align-items: center; position: relative; }
         #joystick-knob { width: 45px; height: 45px; background: #ff4757; border-radius: 50%; position: absolute; box-shadow: 0 0 10px rgba(255,71,87,0.5); }
@@ -59,28 +59,22 @@
     let isHost = false;
     let myId = '';
 
+    // Загрузка картинок персонажей
+    const boyImg = new Image();
+    boyImg.src = 'boy.jpg';
+
+    const girlImg = new Image();
+    girlImg.src = 'girl.jpg';
+
     // Игровые персонажи
-    let player = { x: 100, y: 100, radius: 18, color: '#2ed573', speed: 4 }; // Искатель (Она)
-    let slime = { x: 500, y: 500, radius: 22, color: '#ff4757', speed: 3.5 };  // Слайм (Ты)
+    let player = { x: 100, y: 100, radius: 22, speed: 4 }; // Искатель (Она / girl.jpg)
+    let slime = { x: 500, y: 500, radius: 24, speed: 3.5 };  // Слайм (Ты / boy.jpg)
     let items = [];
     let score = 0;
     let keys = {};
     let inputVector = { x: 0, y: 0 };
 
-    // Набор икон/эмодзи предметов
     const ITEM_TYPES = ['❤️', '☕', '🍫', '🍪', '🎁', '✨', '🧸'];
-
-    /* 
-       --- ИНСТРУКЦИЯ ДЛЯ СВОИХ КАРТИНОК / ФОТО: ---
-       1. Загрузи картинки в репозиторий (например photo1.jpg, photo2.jpg).
-       2. Раскомментируй код ниже:
-       
-       const myPhotos = ['photo1.jpg', 'photo2.jpg'].map(src => {
-           let img = new Image();
-           img.src = src;
-           return img;
-       });
-    */
 
     function initPeer() {
         const roomCode = Math.floor(1000 + Math.random() * 9000).toString();
@@ -157,7 +151,7 @@
         }
     }
 
-    // Улучшенный джойстик
+    // Джойстик управления
     const joyZone = document.getElementById('joystick-zone');
     const joyKnob = document.getElementById('joystick-knob');
 
@@ -245,10 +239,34 @@
         }
     }
 
+    // Вспомогательная функция для отрисовки круглых аватарок с рамкой
+    function drawAvatar(img, x, y, radius, borderColor) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.clip();
+        
+        if (img.complete && img.naturalWidth !== 0) {
+            ctx.drawImage(img, x - radius, y - radius, radius * 2, radius * 2);
+        } else {
+            ctx.fillStyle = borderColor;
+            ctx.fill();
+        }
+        
+        ctx.restore();
+
+        // Обводка/Рамка
+        ctx.strokeStyle = borderColor;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.stroke();
+    }
+
     function draw() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // Отрисовка предмета (эмодзи иконки)
+        // Отрисовка предметов
         ctx.font = '24px serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
@@ -259,19 +277,11 @@
             }
         });
 
-        // Отрисовка Искателя (Зеленый персонаж)
-        ctx.fillStyle = player.color;
-        ctx.beginPath();
-        ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillText('👸', player.x, player.y);
+        // Отрисовка Искателя (girl.jpg с зеленой рамкой)
+        drawAvatar(girlImg, player.x, player.y, player.radius, '#2ed573');
 
-        // Отрисовка Слайма (Красный персонаж)
-        ctx.fillStyle = slime.color;
-        ctx.beginPath();
-        ctx.arc(slime.x, slime.y, slime.radius, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillText('👾', slime.x, slime.y);
+        // Отрисовка Слайма (boy.jpg с красной рамкой)
+        drawAvatar(boyImg, slime.x, slime.y, slime.radius, '#ff4757');
     }
 
     function gameLoop() {
